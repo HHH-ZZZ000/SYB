@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f4f5">
+  <meta name="description" content="基于 ESP32-S3-EYE 与 QMA6100P 的真实三轴加速度实时监控平台。">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2320292f'/%3E%3Cpath d='M7 17h5l3-8 4 16 3-8h4' fill='none' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+  <title>智能传感监控平台 · 实时数据</title>
+</head>
+<body data-state="loading">
+  <header class="system-header">
+    <a class="brand" href="/" aria-label="智能传感监控平台首页">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 28 28"><path d="M3 15h6l3-8 4 15 3-7h6"/></svg></span>
+      <span>智能传感<span class="brand-light">监控平台</span></span>
+      <span class="system-tag">实验台 / 01</span>
+    </a>
+    <div class="header-meta">
+      <details class="connection-details">
+        <summary class="status-indicator network-status" aria-label="服务器状态与实时连接详情"><span id="network-status" role="status">服务器连接中</span></summary>
+        <div class="connection-popover"><span class="subtle">实时连接</span><span id="transport-status">正在建立实时连接</span></div>
+      </details>
+      <span class="status-indicator status-badge" id="header-status" role="status"><span id="header-status-text">正在连接</span></span>
+      <span class="header-divider"></span>
+      <div class="header-updated"><span class="micro-label">最近更新时间</span><span id="header-time" class="mono">—</span></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="page-heading">
+      <div><p class="eyebrow">惯性传感数据采集系统</p><h1>设备监控工作台</h1></div>
+    </div>
+
+    <div id="alert" class="alert" role="status" aria-live="polite" hidden></div>
+
+      <section class="panel device-panel" aria-label="设备与采集状态">
+        <div class="device-identity">
+          <div class="device-symbol" aria-hidden="true"><svg viewBox="0 0 44 44"><rect x="11" y="11" width="22" height="22" rx="2"/><rect x="17" y="17" width="10" height="10"/><path d="M16 5v6m6-6v6m6-6v6M16 33v6m6-6v6m6-6v6M5 16h6m-6 6h6m-6 6h6m22-12h6m-6 6h6m-6 6h6"/></svg></div>
+          <div><h2 id="device-name" class="mono">ESP32-S3-EYE</h2><p><span id="sensor-name">QMA6100P</span> · 三轴加速度计</p></div>
+        </div>
+        <dl class="device-facts">
+          <div><dt>设备状态</dt><dd id="connection-text">正在连接…</dd></div>
+          <div><dt>最近接收</dt><dd id="last-received" class="mono">—</dd></div>
+          <div><dt>累计样本</dt><dd id="sample-count" class="mono">—</dd></div>
+        </dl>
+      </section>
+
+    <div class="monitor-grid">
+      <article class="panel measurement-panel" aria-label="当前传感器测量值">
+        <div class="panel-heading"><div><h2>实时测量</h2><p class="subtle value-caption">等待首次采样</p></div></div>
+        <div class="measurements">
+          <div class="axis-row"><span class="axis-label axis-x">X <span>轴</span></span><span class="reading" id="acc_x">—</span><span class="unit">g</span></div>
+          <div class="axis-row"><span class="axis-label axis-y">Y <span>轴</span></span><span class="reading" id="acc_y">—</span><span class="unit">g</span></div>
+          <div class="axis-row"><span class="axis-label axis-z">Z <span>轴</span></span><span class="reading" id="acc_z">—</span><span class="unit">g</span></div>
+          <div class="axis-row magnitude-row"><span class="magnitude-label"><span class="mono">MAG</span><span>合加速度</span></span><span class="reading" id="acc-magnitude">—</span><span class="unit">g</span></div>
+        </div>
+        <div class="measurement-footer"><span>包含重力 · 静止约 1 g</span><span class="sensor-note">陀螺仪模块未连接</span></div>
+      </article>
+
+    <section class="panel chart-panel trends-section" aria-labelledby="trends-title">
+      <div class="trends-toolbar">
+        <div class="trends-heading"><h2 id="trends-title">实时加速度趋势</h2><span id="chart-mode" class="subtle">按服务器接收时间 · 实时数据</span></div>
+        <div class="chart-controls">
+          <div class="segmented-control" role="group" aria-label="曲线时间窗口">
+            <button type="button" data-window="30" aria-pressed="false">30 秒</button>
+            <button type="button" data-window="60" aria-pressed="true">60 秒</button>
+            <button type="button" data-window="120" aria-pressed="false">120 秒</button>
+          </div>
+          <button type="button" id="pause-button" class="pause-button" aria-pressed="false"><svg id="pause-icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M5 3v10M11 3v10"/></svg><span id="pause-label">冻结曲线</span></button>
+        </div>
+      </div>
+      <p id="history-error" class="history-error" role="status" hidden>历史数据加载失败，正在自动重试。</p>
+          <div class="chart-meta"><span class="subtle">加速度 / g</span><div class="legend" aria-label="曲线坐标轴"><span class="legend-x">X</span><span class="legend-y">Y</span><span class="legend-z">Z</span></div></div>
+          <div class="chart-container"><canvas id="acc-chart" role="img" aria-label="三轴加速度随服务器接收时间变化的曲线，当前测量值见实时测量卡片。"></canvas><div class="chart-empty" id="acc-empty"><span class="empty-icon" aria-hidden="true">⌁</span><strong>正在加载历史数据…</strong><span>设备上传数据后显示测量值。</span></div><div class="chart-tooltip" id="acc-tooltip" hidden></div></div>
+          <div class="chart-footer"><span>当前窗口 <span class="chart-point-count">0</span> 个采样点</span><span>北京时间</span></div>
+    </section>
+
+      <section class="panel camera-panel" aria-labelledby="camera-title" data-state="connecting">
+        <div class="panel-heading"><h2 id="camera-title">实时摄像头</h2><span id="camera-status" class="status-indicator camera-status" role="status">正在连接</span></div>
+        <div class="camera-view">
+        <div class="camera-frame">
+          <img id="camera-image" alt="开发板摄像头实时画面" width="320" height="240" hidden>
+          <div id="camera-empty" class="camera-empty"><svg aria-hidden="true" viewBox="0 0 40 32"><rect x="3" y="6" width="25" height="20" rx="2"/><path d="M28 12l9-5v18l-9-5"/></svg><strong id="camera-message">正在检查摄像头连接</strong><span id="camera-detail">等待真实视频画面</span></div>
+        </div>
+        </div>
+        <div class="camera-footer"><span class="mono" aria-label="画面尺寸 320 乘 240">320 × 240</span><span id="camera-fps" aria-label="实测帧率">—</span><span id="camera-mode">等待视频流</span></div>
+      </section>
+    </div>
+
+    <section class="panel history-panel" aria-labelledby="history-title">
+      <div class="panel-heading"><div><h2 id="history-title">历史采样记录</h2><p class="subtle">最近 6 条真实入库记录 · 北京时间</p></div><span id="history-count" class="subtle">等待加载</span></div>
+      <div class="history-table-wrap" tabindex="0" role="region" aria-label="历史采样表格，可横向滚动"><table><thead><tr><th scope="col">记录编号</th><th scope="col">接收时间</th><th scope="col">X 轴 / g</th><th scope="col">Y 轴 / g</th><th scope="col">Z 轴 / g</th><th scope="col">合加速度 / g</th></tr></thead><tbody id="history-rows"><tr><td colspan="6" class="table-empty">正在加载历史记录…</td></tr></tbody></table></div>
+    </section>
+
+    <footer class="workspace-footer">
+      <p class="sample-timestamp">设备采样时间 <span id="sample-timestamp" class="mono">—</span><span>北京时间</span></p>
+      <span id="data-rate">数据接收频率：等待采样</span>
+    </footer>
+    <noscript><p class="alert">实时数据显示需要浏览器允许脚本运行，请启用后重新加载页面。</p></noscript>
+  </main>
+</body>
+</html>

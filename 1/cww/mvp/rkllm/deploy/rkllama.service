@@ -1,0 +1,22 @@
+[Unit]
+Description=RKLLama Qwen2-VL server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orangepi
+Group=orangepi
+WorkingDirectory=/home/orangepi/rkllama
+Environment=HOME=/home/orangepi
+Environment=HF_HOME=/home/orangepi/rkllama/data/huggingface
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=RKLLM_LOG_LEVEL=1
+ExecStart=/home/orangepi/rkllama/.venv/bin/rkllama_server --processor rk3588 --models /home/orangepi/rkllama/models --port 8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+LimitNOFILE=102400
+
+[Install]
+WantedBy=multi-user.target

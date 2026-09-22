@@ -1,0 +1,8 @@
+dependencies:
+  idf: ">=5.4"
+  espressif/esp-dl:
+    version: "^3.3.0"
+  espressif/esp32_s3_eye:
+    version: "^6.0.0"
+    rules:
+      - if: "target == esp32s3"

@@ -1,0 +1,4 @@
+dependencies:
+  espressif/esp-dl: "3.3.9"
+  espressif/esp-sr: "^2.0.0"
+  espressif/esp32_s3_eye: "^6.0.0"

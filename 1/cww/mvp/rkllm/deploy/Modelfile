@@ -1,0 +1,18 @@
+FROM="Qwen2-VL-2B-Instruct.rkllm"
+HUGGINGFACE_PATH="Qwen/Qwen2-VL-2B-Instruct"
+
+SYSTEM="You are a helpful vision assistant. Answer in the language used by the user."
+
+NUM_CTX=1024
+MAX_NEW_TOKENS=256
+TEMPERATURE=0.5
+TOP_K=7
+TOP_P=0.5
+REPEAT_PENALTY=1.1
+
+IMAGE_WIDTH=392
+IMAGE_HEIGHT=392
+N_IMAGE_TOKENS=196
+IMG_START=<|vision_start|>
+IMG_END=<|vision_end|>
+IMG_CONTENT=<|image_pad|>

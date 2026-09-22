@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+server/*.db
+server/*.db-shm
+server/*.db-wal
+.qa/
+device/build/
+device/sdkconfig
+device/sdkconfig.old
+device/main/config.local.h
+device/.private/
+device/managed_components/

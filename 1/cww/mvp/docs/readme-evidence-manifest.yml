@@ -1,0 +1,244 @@
+# README 中的历史数据、运行证据和待验证项登记。
+# pending：尚未完成对应环境验证；reference：旧文档/示例参考；measured：已有可追溯实测记录。
+cases:
+  - case: microcourses/01_train_sin_model
+    type: PY
+    evidence_status: pending
+    source_file: microcourses/01_train_sin_model/sin_model.py
+    source_kind: stdout
+    tested_on: host Python environment
+    idf_version: not_applicable
+    config: "epochs=500, seed=42, num_samples=1000"
+    artifacts: "outputs/sin_model.pth, outputs/sin_model.onnx, outputs/loss_history.csv, outputs/loss_curve.png, outputs/fit_curve.png"
+    retained_in_readme: true
+
+  - case: microcourses/02_quantize_sin_model
+    type: PY
+    evidence_status: pending
+    source_file: microcourses/02_quantize_sin_model/quantize_onnx_model.py
+    source_kind: stdout
+    tested_on: host Python environment
+    idf_version: not_applicable
+    config: "target=esp32s3, input_shape=[1,1], num_of_bits=8, calib_steps=32, shuffle=false"
+    artifacts: "outputs/sin_model.espdl, outputs/sin_model.json, outputs/sin_model.info, MSE/size stdout"
+    retained_in_readme: true
+
+  - case: microcourses/03_run_sin_model
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/03_run_sin_model/main/app_main.cpp
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: "v5.4.3 or unknown until run is recorded"
+    config: "flash rodata sin_model.espdl, input degree=90, three run modes plus model->test()"
+    artifacts: "build log, run1/run2/run3 serial output, model test result"
+    retained_in_readme: true
+
+  - case: microcourses/04_live_infer_tuning
+    type: FW
+    evidence_status: reference
+    source_file: microcourses/04_live_infer_tuning/README.md
+    source_kind: reference
+    tested_on: ESP32-S3-EYE (historical README record; recheck pending)
+    idf_version: unknown
+    config: "cat/dog live preview, inference core 0 or 1, CPU 160 or 240 MHz"
+    artifacts: "historical infer/period/core/cpu values"
+    retained_in_readme: true
+
+  - case: microcourses/05_mic_recording
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/05_mic_recording/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "16 kHz, mono, 16 bit PCM, RECORD_SECONDS=10"
+    artifacts: "START/progress/duration/DONE or FAILED serial log"
+    retained_in_readme: true
+
+  - case: microcourses/06_vad_detection
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/06_vad_detection/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "VAD_MODE_1, min_speech_ms=128, min_noise_ms=1000"
+    artifacts: "SPEECH/NOISE transition log and fetch error log"
+    retained_in_readme: true
+
+  - case: microcourses/07_wakenet_wav
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/07_wakenet_wav/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "16 kHz mono 16 bit PCM WAV, 44-byte header, hiesp/hilexin models"
+    artifacts: "WAV input metadata, DETECTED/END logs, missing-file errors"
+    retained_in_readme: true
+
+  - case: microcourses/08_multinet_command
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/08_multinet_command/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "Hi ESP wake word, MultiNet CN, configured command IDs, 6000 parameter"
+    artifacts: "WAIT_WAKE/LISTEN_COMMAND/COMMAND_DETECTED/COMMAND_TIMEOUT logs"
+    retained_in_readme: true
+
+  - case: microcourses/09_audio_perf_tradeoff
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/09_audio_perf_tradeoff/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "VOICE_BENCH_MODE VAD/WakeNet/MultiNet, duration_ms=10000"
+    artifacts: "BENCH summary count/avg/min/max and RAM/PSRAM logs"
+    retained_in_readme: true
+
+  - case: microcourses/10_system_state_machine
+    type: FW
+    evidence_status: pending
+    source_file: microcourses/10_system_state_machine/main/state_machine.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "normal, fail_record, cancel and timeout mock scenarios"
+    artifacts: "STATE transition logs and ERROR/RESET recovery logs"
+    retained_in_readme: true
+
+  - case: extensions/01_train_catdog_model
+    type: PY
+    evidence_status: pending
+    source_file: extensions/01_train_catdog_model/train_catdog.py
+    source_kind: stdout
+    tested_on: host Python environment
+    idf_version: not_applicable
+    config: "ImageFolder cat/dog, 224x224, MobileNetV2, epochs=3, seed=42"
+    artifacts: "outputs/pth, outputs/onnx, labels.txt, metrics.csv, loss_curve.png"
+    retained_in_readme: true
+
+  - case: extensions/02_quantize_catdog_model
+    type: PY
+    evidence_status: pending
+    source_file: extensions/02_quantize_catdog_model/quantize_catdog.py
+    source_kind: stdout
+    tested_on: host Python environment
+    idf_version: not_applicable
+    config: "target=esp32s3, input_shape=[1,3,224,224], 8 bit, shuffle=false"
+    artifacts: "catdog_mobilenet_v2.espdl, float/ESPDL size stdout, accuracy comparison pending"
+    retained_in_readme: true
+
+  - case: extensions/03_catdog_static_infer
+    type: FW
+    evidence_status: pending
+    source_file: extensions/03_catdog_static_infer/main/app_main.cpp
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "SD model path /sdcard/models/s3/catdog_mobilenet_v2.espdl, JPEG path /sdcard/images/sample.jpg"
+    artifacts: "mount/decode/top1/infer logs and failure paths"
+    retained_in_readme: true
+
+  - case: extensions/03_live_catdog_assignment
+    type: ASSIGNMENT
+    evidence_status: pending
+    source_file: extensions/03_live_catdog_assignment/main/app_main.cpp
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "RGB565 preview, 3 frame buffers, embedded model, inference interval 500 ms"
+    artifacts: "inference sequence, Top-1, confidence, latency, capture/inference/drop audit"
+    retained_in_readme: true
+
+  - case: extensions/04_live_infer_optimized
+    type: FW
+    evidence_status: measured
+    source_file: extensions/04_live_infer_optimized/README.md
+    source_kind: reference
+    tested_on: ESP32-S3-EYE (historical record; port path intentionally redacted)
+    idf_version: unknown
+    config: "CPU1 inference, CPU0 preview, 240 MHz, 3 frame buffers, 500 ms interval"
+    artifacts: "historical FPS/infer/period/frame_age/heap/PSRAM/watchdog logs"
+    retained_in_readme: true
+
+  - case: extensions/04_live_infer_trace
+    type: FW
+    evidence_status: pending
+    source_file: extensions/04_live_infer_trace/main/app_main.cpp
+    source_kind: build
+    tested_on: ESP32-S3-EYE (host build verified; hardware trace capture pending)
+    idf_version: "v5.4.3"
+    config: "microcourse 04 baseline, CPU0 inference, CPU0 preview, 160 MHz, 3 frame buffers, 500 ms interval"
+    artifacts: "build log, serial Chrome Trace JSON, trace.json, Perfetto screenshot"
+    retained_in_readme: true
+
+  - case: extensions/05_recording_playback_verify
+    type: FW
+    evidence_status: pending
+    source_file: extensions/05_recording_playback_verify/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "GPIO0 trigger, 16 kHz mono 16 bit WAV, RECORD_SECONDS=10"
+    artifacts: "WAV header/file size/duration/stat log and host playback result"
+    retained_in_readme: true
+
+  - case: extensions/06_vad_stability_test
+    type: FW
+    evidence_status: pending
+    source_file: extensions/06_vad_stability_test/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "30 s window, VAD_MODE_1, min_speech_ms=128, min_noise_ms=1000"
+    artifacts: "per-scenario transitions, segment durations and summaries"
+    retained_in_readme: true
+
+  - case: extensions/07_wakenet_realtime
+    type: FW
+    evidence_status: pending
+    source_file: extensions/07_wakenet_realtime/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "AFE real-time feed/fetch, existing Hi ESP model, 3 s post-wake window"
+    artifacts: "wake hit/miss/false-wake counts and latency"
+    retained_in_readme: true
+
+  - case: extensions/08_command_action_binding
+    type: FW
+    evidence_status: pending
+    source_file: extensions/08_command_action_binding/main/main.c
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "command IDs 1/2/3 mapped to LOOK/CAPTURE/REPEAT simulation callbacks"
+    artifacts: "callback, unknown, timeout and summary logs"
+    retained_in_readme: true
+
+  - case: extensions/09_audio_resource_budget
+    type: FW
+    evidence_status: pending
+    source_file: extensions/09_audio_resource_budget/tools/run_matrix.sh
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "VAD/WakeNet/MultiNet x cpu160/cpu240, independent build directories"
+    artifacts: "six build results, raw logs and parsed CSV summaries"
+    retained_in_readme: true
+
+  - case: extensions/10_state_machine_test
+    type: FW
+    evidence_status: pending
+    source_file: extensions/10_state_machine_test/main/real_actions.cpp
+    source_kind: build
+    tested_on: ESP32-S3-EYE (hardware run pending)
+    idf_version: unknown
+    config: "GPIO0, RGB565 image, 10 s WAV, embedded cat/dog model, esp_timer timestamp"
+    artifacts: "three-file record set, metadata association, failure injection logs"
+    retained_in_readme: true

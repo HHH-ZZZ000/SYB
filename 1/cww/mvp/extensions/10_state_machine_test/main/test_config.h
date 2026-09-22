@@ -1,0 +1,20 @@
+#pragma once
+
+/* One deterministic scenario per build/run. */
+#define REAL_SCENARIO_NORMAL          0
+#define REAL_SCENARIO_FAIL_CAPTURE    1
+#define REAL_SCENARIO_FAIL_RECORD     2
+#define REAL_SCENARIO_FAIL_INFER      3
+#define REAL_SCENARIO_FAIL_SAVE       4
+#define REAL_SCENARIO_CANCEL          5
+#define REAL_SCENARIO_COMMAND_TIMEOUT 6
+#define REAL_SCENARIO_RECORD_TIMEOUT  7
+
+#ifndef REAL_ACTION_SCENARIO
+#define REAL_ACTION_SCENARIO REAL_SCENARIO_NORMAL
+#endif
+
+#if REAL_ACTION_SCENARIO < REAL_SCENARIO_NORMAL || \
+    REAL_ACTION_SCENARIO > REAL_SCENARIO_RECORD_TIMEOUT
+#error "REAL_ACTION_SCENARIO is not a supported test scenario"
+#endif

@@ -1,0 +1,4 @@
+# 基础 defaults 文件（本体为空配置）。
+# ESP-IDF 只有在存在 sdkconfig.defaults 时，才会追加读取 target 后缀文件
+# sdkconfig.defaults.esp32s3。本工程只面向 esp32s3，实际配置全部写在
+# sdkconfig.defaults.esp32s3 中，此文件仅用于触发该探测机制，请勿删除。
