@@ -16,8 +16,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 156037125,
-                "dominator": 156037125
+                "hash": 2945567449,
+                "dominator": 2945567449
             },
             "fc1.weight": {
                 "bit_width": 8,
@@ -34,8 +34,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 605037236,
-                "dominator": 605037236
+                "hash": 199090744,
+                "dominator": 199090744
             },
             "fc1.bias": {
                 "bit_width": 20,
@@ -52,8 +52,8 @@
                 "state": "PASSIVE",
                 "quant_min": -524288,
                 "quant_max": 524287,
-                "hash": 1162479271,
-                "dominator": 1162479271
+                "hash": 1934350363,
+                "dominator": 1934350363
             },
             "/Relu_output_0": {
                 "bit_width": 8,
@@ -70,8 +70,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 1925471160,
-                "dominator": 1925471160
+                "hash": 3476239484,
+                "dominator": 3476239484
             }
         },
         "/fc2/Gemm": {
@@ -90,8 +90,8 @@
                 "state": "OVERLAPPED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 3814615963,
-                "dominator": 1925471160
+                "hash": 3388076367,
+                "dominator": 3476239484
             },
             "fc2.weight": {
                 "bit_width": 8,
@@ -108,8 +108,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 2909898738,
-                "dominator": 2909898738
+                "hash": 3126249174,
+                "dominator": 3126249174
             },
             "fc2.bias": {
                 "bit_width": 20,
@@ -126,8 +126,8 @@
                 "state": "PASSIVE",
                 "quant_min": -524288,
                 "quant_max": 524287,
-                "hash": 3083095789,
-                "dominator": 3083095789
+                "hash": 846537281,
+                "dominator": 846537281
             },
             "/Relu_1_output_0": {
                 "bit_width": 8,
@@ -144,8 +144,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 3103442006,
-                "dominator": 3103442006
+                "hash": 3930516090,
+                "dominator": 3930516090
             }
         },
         "/fc3/Gemm": {
@@ -164,8 +164,8 @@
                 "state": "OVERLAPPED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 3193907649,
-                "dominator": 3103442006
+                "hash": 3607643989,
+                "dominator": 3930516090
             },
             "fc3.weight": {
                 "bit_width": 8,
@@ -182,8 +182,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 2304992640,
-                "dominator": 2304992640
+                "hash": 2214550724,
+                "dominator": 2214550724
             },
             "fc3.bias": {
                 "bit_width": 20,
@@ -200,8 +200,8 @@
                 "state": "PASSIVE",
                 "quant_min": -524288,
                 "quant_max": 524287,
-                "hash": 4218580547,
-                "dominator": 4218580547
+                "hash": 1595447415,
+                "dominator": 1595447415
             },
             "output": {
                 "bit_width": 8,
@@ -218,8 +218,8 @@
                 "state": "ACTIVATED",
                 "quant_min": -128,
                 "quant_max": 127,
-                "hash": 3185713146,
-                "dominator": 3185713146
+                "hash": 885092702,
+                "dominator": 885092702
             }
         }
     },
@@ -229,43 +229,43 @@
         "/fc3/Gemm": "ESPDL_S3_INT8"
     },
     "values": {
-        "156037125": {
+        "2945567449": {
             "scale": 0.0625,
             "zero_point": 0.0
         },
-        "605037236": {
+        "199090744": {
             "scale": 0.0078125,
             "zero_point": 0.0
         },
-        "1162479271": {
+        "1934350363": {
             "scale": 0.00048828125,
             "zero_point": 0.0
         },
-        "1925471160": {
+        "3476239484": {
             "scale": 0.0625,
             "zero_point": 0.0
         },
-        "2909898738": {
+        "3126249174": {
             "scale": 0.0078125,
             "zero_point": 0.0
         },
-        "3083095789": {
+        "846537281": {
             "scale": 0.00048828125,
             "zero_point": 0.0
         },
-        "3103442006": {
+        "3930516090": {
             "scale": 0.015625,
             "zero_point": 0.0
         },
-        "2304992640": {
+        "2214550724": {
             "scale": 0.0078125,
             "zero_point": 0.0
         },
-        "4218580547": {
+        "1595447415": {
             "scale": 0.0001220703125,
             "zero_point": 0.0
         },
-        "3185713146": {
+        "885092702": {
             "scale": 0.0078125,
             "zero_point": 0.0
         }

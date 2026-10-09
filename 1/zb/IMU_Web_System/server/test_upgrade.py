@@ -81,7 +81,7 @@ class UpgradeTests(unittest.TestCase):
         with closing(sqlite3.connect(path)) as db:
             self.assertEqual(db.execute("SELECT id, device, sensor, acc_x, acc_y, acc_z, timestamp, received_at FROM sensor_data ORDER BY id").fetchall(), rows)
             self.assertEqual(db.execute("SELECT gyro_x, gyro_y, gyro_z FROM sensor_data").fetchall(), [(None, None, None)] * 2)
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
         self.assertEqual(app.test_client().post("/api/upload", json=self.sample).get_json()["id"], 12)
 
     def test_migration_error_rolls_back_added_columns_and_version(self):
@@ -205,6 +205,8 @@ class CameraTests(unittest.TestCase):
                 validate_camera_url(value)
 
     def test_actual_loopback_mjpeg_online_disconnect_recovery_and_sensor_independence(self):
+        from test_images import jpeg
+        preview_jpeg = jpeg()
         disconnected = threading.Event()
         stopping = threading.Event()
         requests = []
@@ -216,7 +218,7 @@ class CameraTests(unittest.TestCase):
                 self.end_headers()
                 try:
                     while not stopping.is_set() and not disconnected.is_set():
-                        self.wfile.write(b"--test\r\nContent-Type: image/jpeg\r\n\r\n" + JPEG_FIXTURE + b"\r\n")
+                        self.wfile.write(b"--test\r\nContent-Type: image/jpeg\r\n\r\n" + preview_jpeg + b"\r\n")
                         self.wfile.flush()
                         stopping.wait(.03)
                 except (BrokenPipeError, ConnectionResetError):
@@ -242,8 +244,8 @@ class CameraTests(unittest.TestCase):
                 wait_until(lambda: client.get("/api/status").get_json()["camera"]["status"] == "online")
                 first = client.get("/api/camera", buffered=False)
                 second = client.get("/api/camera", buffered=False)
-                self.assertIn(JPEG_FIXTURE, next(first.response))
-                self.assertIn(JPEG_FIXTURE, next(second.response))
+                self.assertIn(preview_jpeg, next(first.response))
+                self.assertIn(preview_jpeg, next(second.response))
                 self.assertEqual(len(requests), 1)  # Two viewers, one real upstream.
                 self.assertEqual(camera._clients, 2)
                 first.close()
@@ -260,6 +262,16 @@ class CameraTests(unittest.TestCase):
                 disconnected.clear()
                 wait_until(lambda: camera.status()["status"] == "online")
                 self.assertEqual(client.get("/api/latest").get_json()["total_samples"], 1)
+                self.assertEqual(camera.status()["width"], 320)
+                old_viewer = camera.subscribe()
+                self.assertEqual(client.post("/api/camera/preview", json={"enabled": False}).status_code, 200)
+                self.assertFalse(camera.status()["preview_enabled"])
+                self.assertFalse(camera._thread and camera._thread.is_alive())
+                self.assertEqual(client.get("/api/camera").status_code, 503)
+                self.assertEqual(client.post("/api/camera/preview", json={"enabled": True}).status_code, 200)
+                wait_until(lambda: camera.status()["status"] == "online")
+                with self.assertRaises(StopIteration): next(old_viewer)
+                self.assertEqual(camera._clients, 0)
             finally:
                 camera.stop()
                 self.assertFalse(camera._thread.is_alive())

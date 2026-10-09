@@ -4,6 +4,7 @@ __pycache__/
 server/*.db
 server/*.db-shm
 server/*.db-wal
+server/images/
 .qa/
 device/build/
 device/sdkconfig

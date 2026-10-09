@@ -6,23 +6,30 @@ import os
 import queue
 import re
 import secrets
+import socket
+import ipaddress
 import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, redirect
 from flask_sock import Sock
 from simple_websocket import ConnectionClosed
 from werkzeug.exceptions import HTTPException
 
 if __package__:
-    from . import database
+    from . import database, tasks, records, assistant, images, vision
     from .camera import BOUNDARY, CameraStream
     from .telemetry import TelemetryHub
 else:
     import database
+    import tasks
+    import records
+    import assistant
+    import images
+    import vision
     from camera import BOUNDARY, CameraStream
     from telemetry import TelemetryHub
 
@@ -43,7 +50,7 @@ def validate_upload(payload):
     missing = [field for field in required if field not in payload]
     if missing:
         raise ValueError("Missing fields: " + ", ".join(missing))
-    extra = set(payload) - set(required) - set(GYRO_AXES)
+    extra = set(payload) - set(required) - set(GYRO_AXES) - {"request_id"}
     if extra:
         raise ValueError("Unsupported fields: " + ", ".join(sorted(extra)))
     if payload["sensor"] != SENSOR:
@@ -52,6 +59,8 @@ def validate_upload(payload):
     if not isinstance(device, str) or not DEVICE_PATTERN.fullmatch(device):
         raise ValueError("device must contain 1-64 letters, digits, underscores or hyphens.")
     sample = {"device": device, "sensor": SENSOR}
+    if payload.get("request_id") is not None:
+        sample["request_id"] = tasks.validate_request_id(payload["request_id"])
     for axis in AXES:
         value = payload[axis]
         # bool is a Python int subclass, but not a valid sensor measurement.
@@ -100,22 +109,30 @@ def create_app(test_config=None):
     app = Flask(__name__, static_folder=str(project_dir / "web"), static_url_path="/static")
     app.config.from_mapping(
         DATABASE=os.environ.get("IMU_DATABASE", str(project_dir / "server" / "sensor.db")),
+        IMAGE_DIRECTORY=None,
+        IMAGE_RETAIN_COUNT=20,
         MAX_CONTENT_LENGTH=8192,
         JSON_SORT_KEYS=False,
         TEST_RUN_TOKEN=None,
         CAMERA_ENABLED=None,
         CAMERA_URL=None,
         CAMERA_ALLOW_TEST_UPSTREAM=False,
+        TASK_TIMEOUT_WORKER_ENABLED=None,
+        TASK_TIMEOUT_CHECK_INTERVAL=5.0,
         SOCK_SERVER_OPTIONS={"ping_interval": 10, "max_message_size": 2048},
     )
     if test_config:
         app.config.update(test_config)
     app.json.sort_keys = False
     database.init_app(app)
+    images.register_images(app)
+    vision.register_vision(app)
     isolated = bool(app.testing or app.config.get("TEST_RUN_TOKEN"))
     camera_enabled = app.config["CAMERA_ENABLED"]
     if camera_enabled is None:
-        camera_enabled = not isolated
+        # Single-frame tasks never start the legacy continuous preview. Keep
+        # that older feature explicitly opt-in rather than capturing at boot.
+        camera_enabled = not isolated and os.environ.get("IMU_CAMERA_PREVIEW") == "1"
     # Test factories never inherit the real camera URL from the environment.
     camera_url = app.config["CAMERA_URL"]
     if not isolated and not camera_url:
@@ -133,9 +150,84 @@ def create_app(test_config=None):
             raise ValueError("Invalid device identifier.")
         return device
 
+    records.register_records(app, selected_device, serialize_sample)
+
     @app.get("/")
     def index():
+        # Only a direct browser on this server may use its loopback entry.
+        # Never redirect device APIs or remote/proxied clients to their localhost.
+        host = urlsplit(request.url).hostname
+        if (not request.is_secure and host not in ("localhost", "127.0.0.1", "::1")
+                and not request.headers.get("Forwarded")
+                and not any(k.lower().startswith("x-forwarded-") for k in request.headers.keys())):
+            try:
+                peer = ipaddress.ip_address(request.remote_addr or "")
+                local = {ipaddress.ip_address(addr[4][0].split("%")[0])
+                         for addr in socket.getaddrinfo(socket.gethostname(), None)}
+                if peer.is_loopback or peer in local:
+                    port = int(request.environ["SERVER_PORT"])
+                    if 1 <= port <= 65535:
+                        target = f"http://localhost:{port}/"
+                        if request.query_string:
+                            target += "?" + request.query_string.decode("ascii")
+                        response = redirect(target, code=302)
+                        response.headers["Cache-Control"] = "no-store"
+                        return response
+            except (ValueError, OSError, KeyError, UnicodeDecodeError):
+                pass  # Unknown origin: keep serving normally, never guess a redirect.
         return send_from_directory(app.static_folder, "index.html")
+
+    @app.post("/api/task/create")
+    def create_task():
+        if not request.is_json:
+            return jsonify(error="Content-Type must be application/json."), 415
+        payload = request.get_json()
+        if isinstance(payload, dict) and payload.get("action") == "image_capture":
+            device = payload.get("device")
+            if not isinstance(device, str) or not DEVICE_PATTERN.fullmatch(device):
+                raise ValueError("Invalid device identifier.")
+            device = DEFAULT_DEVICE if device == "ESP32-S3-EYE" else device
+            state = latest_payload(device)  # Exactly the monitor's existing online judgement.
+            if state["id"] is None:
+                raise LookupError("Device not found.")
+            if state["status"] != "online":
+                return jsonify(error="device_offline", message="设备当前离线，无法开始拍照。"), 409
+        task = tasks.create_task(payload)
+        return jsonify(request_id=task["request_id"], status=task["status"]), 201
+
+    @app.get("/api/task/<request_id>")
+    def task_status(request_id):
+        task = tasks.get_task(request_id)
+        if task is None:
+            return jsonify(error="Task not found."), 404
+        return jsonify(task)
+
+    @app.get("/api/task/latest")
+    def latest_task_status():
+        # Read-only dashboard view. Task creation, claiming and state transitions
+        # remain exclusively in the existing Week 2 task system.
+        device = selected_device()
+        row = database.get_db().execute(
+            "SELECT request_id FROM tasks WHERE device = ? AND action = 'capture_once' ORDER BY id DESC LIMIT 1", (device,)
+        ).fetchone()
+        return jsonify(task=tasks.get_task(row["request_id"]) if row else None)
+
+    @app.post("/api/device/task/<request_id>/status")
+    def device_task_status(request_id):
+        if not request.is_json:
+            return jsonify(error="Content-Type must be application/json."), 415
+        task = tasks.device_status(request_id, request.get_json())
+        return jsonify(request_id=task["request_id"], status=task["status"])
+
+    @app.get("/api/device/command")
+    def device_command():
+        # Flask normally maps HEAD to GET; a probe must never consume a task.
+        if request.method != "GET":
+            return jsonify(error="Use GET to claim a command."), 405
+        devices = request.args.getlist("device")
+        if len(devices) != 1:
+            raise ValueError("Exactly one device parameter is required.")
+        return jsonify(tasks.claim_command(devices[0]))
 
     @app.post("/api/upload")
     def upload():
@@ -151,14 +243,20 @@ def create_app(test_config=None):
         # Receipt time belongs to the server, never to the untrusted device clock.
         received_at = time.time()
         with app.extensions["sample_lock"]:
-            row_id = database.insert_sample(sample, received_at)
-            total = app.extensions["sample_counts"][sample["device"]][1]
-            hub.publish({"type": "sample", "sample": serialize_sample({
-                **sample, "id": row_id, "received_at": received_at,
-            }), "server_time_ms": round(time.time() * 1000), "total_samples": total})
+            row_id, created = database.insert_sample(sample, received_at, return_created=True)
+            if created:
+                total = app.extensions["sample_counts"][sample["device"]][1]
+                # Keep the existing telemetry sample format unchanged.
+                telemetry_sample = {key: value for key, value in sample.items() if key != "request_id"}
+                hub.publish({"type": "sample", "sample": serialize_sample({
+                    **telemetry_sample, "id": row_id, "received_at": received_at,
+                }), "server_time_ms": round(time.time() * 1000), "total_samples": total})
         if sample["device"] == DEFAULT_DEVICE:
             camera.discover(request.remote_addr)
-        return jsonify(ok=True, id=row_id, device=sample["device"]), 201
+        result = dict(ok=True, id=row_id, device=sample["device"])
+        if sample.get("request_id"):
+            result.update(request_id=sample["request_id"], status="SUCCESS")
+        return jsonify(result), 201
 
     @app.get("/api/latest")
     def latest():
@@ -208,11 +306,58 @@ def create_app(test_config=None):
     def status():
         device = selected_device()
         result = latest_payload(device)
-        result["camera"] = camera.status() if device == DEFAULT_DEVICE else {
-            "status": "offline", "fps": None, "last_frame_at_ms": None,
-            "frame_age_ms": None, "width": 320, "height": 240,
-        }
+        result["camera"] = camera_payload(device, result["status"])
         return jsonify(result)
+
+    def camera_payload(device, device_status):
+        preview = camera.status() if device == DEFAULT_DEVICE else {
+            "status": "offline", "preview_enabled": False, "preview_available": False,
+            "fps": None, "last_frame_at_ms": None, "width": None, "height": None,
+        }
+        # These are existing device outcomes, not a second camera health probe.
+        last = database.get_db().execute("""SELECT request_id, status, error, finished_at, result_image_id
+            FROM tasks WHERE device = ? AND action = 'image_capture'
+            AND status IN ('SUCCESS', 'FAILED', 'TIMEOUT') ORDER BY id DESC LIMIT 1""", (device,)).fetchone()
+        if device_status == "offline":
+            mode = "device_offline"
+        elif preview["status"] == "online":
+            mode = "streaming"
+        elif last and last["error"] == "camera_unavailable":
+            mode = "camera_unavailable"
+        elif last and last["status"] in ("FAILED", "TIMEOUT"):
+            mode = "capture_failed"
+        elif last and last["status"] == "SUCCESS" and last["result_image_id"]:
+            mode = "on_demand"
+        else:
+            mode = "unknown"
+        return {**preview, "mode": mode, "last_capture": dict(last) if last else None}
+
+    @app.post("/api/camera/preview")
+    def camera_preview():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or set(body) != {"enabled"} or type(body["enabled"]) is not bool:
+            raise ValueError("Preview body must contain only enabled: true/false.")
+        device_status = latest_payload(DEFAULT_DEVICE)["status"]
+        if body["enabled"] and device_status != "online":
+            return jsonify(error="device_offline"), 409
+        try:
+            camera.set_enabled(body["enabled"])
+        except RuntimeError:
+            return jsonify(error="preview_connection_closing"), 503
+        return jsonify(camera=camera_payload(DEFAULT_DEVICE, device_status))
+
+    @app.get("/api/devices")
+    def devices():
+        identifiers = {row[0] for row in database.get_db().execute(
+            "SELECT DISTINCT device FROM sensor_data")}
+        identifiers.add(DEFAULT_DEVICE)
+        result = []
+        for identifier in sorted(identifiers):
+            item = latest_payload(identifier)
+            # The current proxy is physically attached only to the default board.
+            item["camera"] = camera_payload(identifier, item["status"])
+            result.append(item)
+        return jsonify(devices=result)
 
     @app.get("/api/camera")
     def camera_stream():
@@ -269,6 +414,14 @@ def create_app(test_config=None):
             if subscriber is not None:
                 hub.unsubscribe(subscriber)
 
+    @app.errorhandler(database.TaskConflict)
+    def task_conflict(error):
+        return jsonify(error=str(error)), 409
+
+    @app.errorhandler(LookupError)
+    def task_missing(error):
+        return jsonify(error=str(error)), 404
+
     @app.errorhandler(ValueError)
     def validation_error(error):
         return jsonify(error=str(error)), 400
@@ -295,6 +448,14 @@ def create_app(test_config=None):
         )
         return response
 
+    # Reuse the existing inventory view; intent parsing itself never dispatches tasks.
+    assistant.register_assistant(app, lambda: devices().get_json()["devices"])
+
+    enabled = app.config["TASK_TIMEOUT_WORKER_ENABLED"]
+    if enabled is None:
+        enabled = not isolated
+    if enabled:
+        tasks.start_timeout_worker(app)
     return app
 
 

@@ -1,3 +1,6 @@
 Flask>=3.1.0,<4.0
 flask-sock>=0.7.0,<0.8
 simple-websocket>=1.1.0,<2.0
+Pillow>=11,<13
+opencv-contrib-python-headless==4.10.0.84
+numpy==2.2.6

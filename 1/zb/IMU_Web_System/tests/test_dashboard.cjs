@@ -1,124 +1,175 @@
-// Isolated startup/recovery tests. Execute the actual dashboard script without
-// network access, hardware, generated measurements, or production database writes.
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const test = require("node:test");
-const vm = require("node:vm");
-
-const script = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
-const settle = () => new Promise((resolve) => setImmediate(resolve));
-
-function dashboard(WebSocket) {
-  const elements = new Map();
-  const timers = new Map();
-  const intervals = new Map();
-  const listeners = new Map();
-  const requests = [];
-  let nextTimer = 0;
-  let clock = 0;
-  function element(key) {
-    if (!elements.has(key)) {
-      elements.set(key, {
-        textContent: "", hidden: false, dataset: {}, parentElement: {},
-        addEventListener() {}, getContext() { return {}; }, removeAttribute() {},
-        setAttribute() {},
-      });
-    }
-    return elements.get(key);
-  }
-  const document = {
-    hidden: false, body: { dataset: {} },
-    getElementById: element, querySelector: element, querySelectorAll: () => [],
-    addEventListener: (name, callback) => listeners.set(name, callback),
-  };
-  const latest = {
-    id: null, total_samples: 0, received_at_ms: null, server_time_ms: Date.now(),
-    camera: { status: "offline", last_frame_at_ms: null, fps: null },
-  };
-  const context = vm.createContext({
-    document, WebSocket, Intl, Date, Math, AbortController,
-    performance: { now: () => clock }, location: { protocol: "http:", host: "isolated.invalid" },
-    ResizeObserver: class { observe() {} }, requestAnimationFrame() {},
-    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay, at: clock + delay }); return id; },
-    clearTimeout: (id) => timers.delete(id),
-    setInterval(callback, delay) { intervals.set(delay, callback); },
-    async fetch(url, options) {
-      assert.equal(options.method, undefined, "Dashboard must only read data");
-      requests.push(url);
-      return { ok: true, json: async () => url === "/api/status" ? latest : { samples: [], has_more: false } };
-    },
-  });
-  vm.runInContext(script, context, { filename: "web/app.js" });
-  return {
-    document, latest, requests, timers, element,
-    async timer(delay) {
-      const target = clock + delay;
-      while (true) {
-        const entry = [...timers].filter(([, timer]) => timer.at <= target)
-          .sort((a, b) => a[1].at - b[1].at)[0];
-        if (!entry) break;
-        clock = entry[1].at;
-        timers.delete(entry[0]);
-        await entry[1].callback();
-        await settle();
-      }
-      clock = target;
-    },
-    tick: () => intervals.get(500)(),
-    visibility(hidden) { document.hidden = hidden; listeners.get("visibilitychange")(); },
-  };
+// Execute the extracted production task controller with isolated protocol fixtures.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname,'../web/services/captureTask.js'),'utf8').replace(/^import .*;$/mg,'').replace('export function','function');
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+function dashboard(_socket,fetchHandler=null,storage=new Map(),latestHandler=null) {
+  const elements=new Map(),timers=new Map(),listeners=new Map(),requests=[];let clock=0,serial=0;
+  function element(id){if(!elements.has(id))elements.set(id,{textContent:'',disabled:false,handlers:new Map(),addEventListener(k,fn){this.handlers.set(k,fn);},removeEventListener(k){this.handlers.delete(k);}});return elements.get(id);}
+  const document={hidden:false,addEventListener:(k,fn)=>listeners.set(k,fn),removeEventListener:k=>listeners.delete(k)};
+  const api={async fetchJson(url,options){requests.push(url);const result=url.startsWith('/api/task/latest')?(latestHandler?await latestHandler(url,options):{ok:true,json:async()=>({task:null})}):await fetchHandler(url,options);if(!result.ok){const error=new Error('HTTP');error.status=result.status;throw error;}return result.json();}};
+  const context=vm.createContext({document,api,AXES:['acc_x','acc_y','acc_z'],panel:{querySelector:id=>element(id.slice(1))},captureButton:element('capture-button'),sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},setTimeout(fn,delay){const id=++serial;timers.set(id,{callback:fn,delay,at:clock+delay});return id;},clearTimeout:id=>timers.delete(id)});
+  vm.runInContext(source+"\nconst dispose=mountCaptureTask(panel,captureButton,api,'ESP32_S3_EYE');",context);
+  return {element,timers,requests,latest:{},document,dispose:()=>vm.runInContext('dispose()',context),visibility(hidden){document.hidden=hidden;listeners.get('visibilitychange')();},async timer(delay){const target=clock+delay;while(true){const entry=[...timers].filter(([,t])=>t.at<=target).sort((a,b)=>a[1].at-b[1].at)[0];if(!entry)break;clock=entry[1].at;timers.delete(entry[0]);await entry[1].callback();await settle();}clock=target;}};
 }
-
-class Socket {
-  close() { this.onclose?.(); }
-}
-
-test("missing WebSocket still starts status and repeated history polling", async () => {
-  const app = dashboard(undefined);
-  await settle();
-  assert.ok(app.requests.includes("/api/status"));
-  assert.ok(app.requests.includes("/api/history?limit=2000"));
-  assert.equal(app.document.body.dataset.state, "offline");
-  assert.equal(app.element("transport-status").textContent, "增量轮询 · 自动恢复推送");
-  await app.timer(200);
-  assert.ok(app.requests.includes("/api/history?limit=2000&after_id=0"));
-});
-
-test("constructor failures keep polling and retry until push becomes available", async () => {
-  let attempts = 0;
-  let socket;
-  const app = dashboard(class {
-    constructor() {
-      if (++attempts < 3) throw new Error("Connection blocked by browser");
-      return (socket = new Socket());
+const taskId='11111111-1111-4111-8111-111111111111';
+const reply=value=>({ok:true,json:async()=>value});
+test("capture click posts once, polls states, and shows only the associated result", async () => {
+  let task = { request_id: taskId, status: "PENDING" };
+  let posts = 0;
+  const app = dashboard(undefined, (url, options) => {
+    if (url === "/api/task/create") {
+      posts++;
+      assert.equal(options.method, "POST");
+      assert.deepEqual(JSON.parse(options.body), {device:"ESP32_S3_EYE",action:"capture_once"});
+      return reply(task);
     }
+    assert.equal(url, `/api/task/${taskId}`);
+    return reply(task);
   });
-  await settle();
-  assert.ok(app.requests.includes("/api/status"));
-  await app.timer(200);
+  const click = app.element("capture-button").handlers.get("click");
+  await Promise.all([click(), click()]);
+  assert.equal(posts, 1);
+  assert.equal(app.element("capture-button").disabled, true);
+  task = {...task, status:"RUNNING"};
   await app.timer(1000);
+  assert.equal(app.element("task-status").textContent, "正在采集");
+  app.latest.acc_x = 1.999;
+  task = {...task, status:"SUCCESS",result_sample_id:42,result:{id:42,acc_x:.123,acc_y:.456,acc_z:.789,timestamp:"2026-09-23 12:00:00"}};
+  await app.timer(1000);
+  assert.match(app.element("task-result").textContent, /采样记录编号：42.*第一轴 0\.123 倍/);
+  assert.doesNotMatch(app.element("task-result").textContent, /1\.999/);
+  assert.equal(app.element("capture-button").disabled, false);
+  const taskReads = app.requests.filter(url => url === `/api/task/${taskId}`).length;
   await app.timer(2000);
-  assert.equal(attempts, 3);
-  socket.onmessage({ data: JSON.stringify({ type: "snapshot", latest: app.latest }) });
-  await settle();
-  app.tick();
-  assert.equal(app.element("transport-status").textContent, "实时推送已连接");
-  assert.ok(![...app.timers.values()].some((timer) => timer.delay === 200));
-  const previousReads = app.requests.length;
-  socket.close();
-  await settle();
-  assert.ok(app.requests.length > previousReads, "Disconnect must resume polling");
+  assert.equal(app.requests.filter(url => url === `/api/task/${taskId}`).length, taskReads);
 });
 
-test("hidden pages cancel failed-connection retries and resume when visible", async () => {
-  let attempts = 0;
-  const app = dashboard(class { constructor() { attempts++; throw new Error("Blocked"); } });
+test("task polling recovers from network errors and pauses while hidden", async () => {
+  let fail = true;
+  const storage = new Map([["imu-last-capture", taskId]]);
+  const app = dashboard(undefined, () => {
+    if (fail) throw new Error("offline");
+    return reply({request_id:taskId,status:"FAILED",error:"sensor_error"});
+  }, storage);
   await settle();
+  assert.equal(app.element("capture-button").disabled, true);
+  assert.match(app.element("task-status").textContent, /重试/);
   app.visibility(true);
-  assert.equal(app.timers.size, 0);
+  const before = app.requests.length;
+  await app.timer(5000);
+  assert.equal(app.requests.length, before);
+  fail = false;
   app.visibility(false);
   await settle();
-  assert.equal(attempts, 2);
-  assert.ok(app.requests.filter((url) => url === "/api/status").length >= 2);
+  assert.equal(app.element("task-status").textContent, "执行失败");
+  assert.equal(app.element("task-result").textContent, "传感器读取异常，请检查设备。");
+  assert.equal(app.element("capture-button").disabled, false);
+});
+
+test("existing task panel displays TIMEOUT and stops polling", async () => {
+  const storage = new Map([["imu-last-capture", taskId]]);
+  const app = dashboard(undefined, () => reply({request_id:taskId,status:"TIMEOUT",error:"task timeout"}), storage);
+  await settle();
+  assert.equal(app.element("task-status").textContent, "任务超时");
+  assert.equal(app.element("task-result").textContent, "任务超时，未能及时收到设备执行结果。");
+  assert.equal(app.element("capture-button").disabled, false);
+  const reads = app.requests.filter(url => url === `/api/task/${taskId}`).length;
+  await app.timer(5000);
+  assert.equal(app.requests.filter(url => url === `/api/task/${taskId}`).length, reads);
+});
+
+test("all six protocol task states display Chinese without changing their task IDs", async () => {
+  const cases = [
+    ["PENDING", "等待设备"], ["SENT", "任务已下发"], ["RUNNING", "正在采集"],
+    ["SUCCESS", "采集完成"], ["FAILED", "执行失败"], ["TIMEOUT", "任务超时"],
+  ];
+  for (const [status, label] of cases) {
+    const task = { request_id: taskId, status };
+    const storage = new Map([["imu-last-capture", taskId]]);
+    const app = dashboard(undefined, () => reply(task), storage);
+    await settle();
+    assert.equal(app.element("task-status").textContent, label, status);
+    assert.doesNotMatch(app.element("task-status").textContent, /[A-Za-z]/);
+    assert.equal(app.element("task-request-id").textContent, taskId);
+    assert.ok(app.requests.includes(`/api/task/${taskId}`));
+    assert.equal(task.status, status, "Display translation must not alter protocol values");
+  }
+});
+
+test("device and server failure codes display actionable Chinese messages", async () => {
+  const cases = [
+    ["capture_queue_busy", "设备采集队列繁忙，请稍后重试。"],
+    ["capture_timeout", "设备采集超时，请检查传感器连接。"],
+    ["sensor_or_clock_error", "传感器读取或设备时间同步异常，请检查设备。"],
+    ["invalid_sensor_result", "本次采样结果无效，请检查传感器。"],
+    ["upload_unconfirmed", "采样结果上传尚未确认，请检查设备与服务器连接。"],
+  ];
+  for (const [error, message] of cases) {
+    const storage = new Map([["imu-last-capture", taskId]]);
+    const app = dashboard(undefined, () => reply({ request_id: taskId, status: "FAILED", error }), storage);
+    await settle();
+    assert.equal(app.element("task-result").textContent, message, error);
+    assert.doesNotMatch(app.element("task-result").textContent, /[A-Za-z]/);
+  }
+});
+
+test("unknown task states and English errors use Chinese fallbacks", async () => {
+  for (const status of ["UNKNOWN_STATE", "toString", "__proto__"]) {
+    const storage = new Map([["imu-last-capture", taskId]]);
+    const app = dashboard(undefined, () => reply({ request_id: taskId, status, error: "Unexpected backend Error" }), storage);
+    await settle();
+    assert.equal(app.element("task-status").textContent, "未知状态", status);
+    assert.equal(app.element("task-result").textContent, "任务执行异常，请根据任务编号查看服务器记录。");
+    assert.doesNotMatch(app.element("task-status").textContent + app.element("task-result").textContent, /[A-Za-z]/);
+  }
+});
+
+test("physical-button task appears in the existing card with its own sample", async () => {
+  let latest = null;
+  const task = { request_id: taskId, status: "SUCCESS", result_sample_id: 51,
+    result: { id: 51, acc_x: .123, acc_y: -.456, acc_z: .789, timestamp: "2026-09-23 12:00:00" } };
+  const app = dashboard(undefined, (url) => {
+    assert.equal(url, `/api/task/${taskId}`);
+    return reply(task);
+  }, new Map(), () => reply({ task: latest }));
+  await settle();
+  latest = task;
+  await app.timer(2000);
+  assert.equal(app.element("task-request-id").textContent, taskId);
+  assert.equal(app.element("task-status").textContent, "采集完成");
+  assert.match(app.element("task-result").textContent, /采样记录编号：51.*第一轴 0\.123 倍/);
+  assert.equal(app.element("capture-button").disabled, false);
+  assert.ok(!app.requests.includes("/api/task/create"));
+});
+
+test("failed creation is not automatically posted again", async () => {
+  let posts = 0;
+  const app = dashboard(undefined, () => { posts++; throw new Error("response lost"); });
+  await app.element("capture-button").handlers.get("click")();
+  await app.timer(5000);
+  assert.equal(posts, 1);
+  assert.match(app.element("task-status").textContent, /未确认/);
+  assert.equal(app.element("capture-button").disabled, false);
+});
+
+test("missing persisted task releases button and clears persistence", async () => {
+  const storage = new Map([["imu-last-capture",taskId]]);
+  const app = dashboard(undefined, () => ({ok:false,status:404}), storage);
+  await settle();
+  assert.equal(storage.has("imu-last-capture"), false);
+  assert.equal(app.element("capture-button").disabled, false);
+  assert.match(app.element("task-status").textContent, /不存在/);
+});
+
+
+test('unmount cancels polling and late status responses cannot mutate another page',async()=>{
+ let resolve;const response=new Promise(r=>resolve=r);
+ const app=dashboard(undefined,()=>response,new Map([['imu-last-capture',taskId]]));
+ app.dispose();const before=app.element('task-status').textContent;
+ resolve(reply({request_id:taskId,status:'SUCCESS'}));await settle();
+ assert.equal(app.element('task-status').textContent,before);assert.equal(app.timers.size,0);
 });

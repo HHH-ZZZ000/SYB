@@ -127,11 +127,12 @@ class IsolatedTestServer:
                 html = response.get_data(as_text=True)
                 html = html.replace("<title>", "<title>[测试数据] ", 1)
                 html = html.replace(
-                    "<main>",
-                    '<main><div class="alert" role="note"><strong>隔离测试工具 / 模拟数据</strong>'
+                    "<!-- test-banner -->",
+                    '<div class="test-banner" role="note"><strong>隔离测试工具 / 模拟数据</strong>'
                     ' — 模拟测试数据，仅用于软件验证；独立测试数据库，非真实传感器读数。</div>',
                     1,
                 )
+                html = html.replace('<body ', '<body data-test-mode="true" ', 1)
                 response.set_data(html)
                 response.headers.pop("ETag", None)
                 response.headers.pop("Last-Modified", None)

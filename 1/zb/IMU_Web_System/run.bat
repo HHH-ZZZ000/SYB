@@ -21,7 +21,7 @@ py -3 -m venv .venv
 if errorlevel 1 goto failed
 
 :check_dependencies
-".venv\Scripts\python.exe" -c "from importlib.metadata import version; import flask, flask_sock; v=tuple(map(int,version('flask').split('.')[:2])); assert (3,1) <= v < (4,0)" >nul 2>nul
+".venv\Scripts\python.exe" -c "from importlib.metadata import version; import flask, flask_sock, PIL, cv2, numpy; assert version('opencv-contrib-python-headless') == '4.10.0.84'; assert version('numpy') == '2.2.6'; v=tuple(map(int,version('flask').split('.')[:2])); assert (3,1) <= v < (4,0)" >nul 2>nul
 if not errorlevel 1 goto start_server
 echo Installing Python dependencies. Internet is needed on first setup only...
 ".venv\Scripts\python.exe" -m pip install -r server\requirements.txt

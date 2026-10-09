@@ -1,12 +1,14 @@
 """One real MJPEG upstream, one bounded latest-frame cache, no database writes."""
 
 import ipaddress
+from io import BytesIO
 from http.client import HTTPException
 import threading
 import time
 from collections import deque
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from PIL import Image
 
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
@@ -96,12 +98,13 @@ class CameraStream:
         self.enabled = enabled
         self._configured = bool(url)
         self._allow_loopback = allow_loopback
-        self._url = validate_camera_url(url, allow_loopback) if enabled and url else None
+        self._url = validate_camera_url(url, allow_loopback) if url else None
         self._timeout = timeout
         self._retry_seconds = retry_seconds
         self._stale_seconds = stale_seconds
         self._max_clients = max_clients
         self._condition = threading.Condition()
+        self._switch_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
         self._frame = None
@@ -112,10 +115,12 @@ class CameraStream:
         self._healthy = False
         self._connecting = False
         self._clients = 0
+        self._generation = 0
+        self._size = (None, None)
         self._http = build_opener(ProxyHandler({}), NoRedirect())
 
     def discover(self, address):
-        if not self.enabled or self._configured or not private_ipv4(address):
+        if self._configured or not private_ipv4(address):
             return
         with self._condition:
             url = f"http://{address}:81/stream"
@@ -127,6 +132,26 @@ class CameraStream:
                 self._times.clear()
                 self._healthy = False
         self.start()
+
+    def set_enabled(self, enabled):
+        """Explicit preview switch; disabling closes the device connection too."""
+        with self._switch_lock:
+            if enabled == self.enabled:
+                return
+            self.enabled = False
+            self._generation += 1
+            self.stop()
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("Previous preview connection is still closing.")
+            with self._condition:
+                self._thread = None
+                self._frame = self._last_frame_at = self._last_frame_mono = None
+                self._times.clear()
+                self._size = (None, None)
+                self._connecting = False
+                self._stop.clear()
+                self.enabled = enabled
+            self.start()
 
     def start(self):
         with self._condition:
@@ -156,10 +181,16 @@ class CameraStream:
                     if response.status != 200 or response.headers.get_content_type() != "multipart/x-mixed-replace":
                         raise ValueError("Camera did not return an MJPEG stream.")
                     for frame in jpeg_frames(response):
+                        with Image.open(BytesIO(frame)) as decoded:
+                            if decoded.format != "JPEG":
+                                raise ValueError("Invalid preview frame.")
+                            decoded.load()
+                            size = decoded.size
                         with self._condition:
                             if self._stop.is_set() or url != self._url:
                                 break
                             self._frame = frame
+                            self._size = size
                             self._sequence += 1
                             self._last_frame_at = time.time()
                             self._last_frame_mono = time.monotonic()
@@ -185,10 +216,12 @@ class CameraStream:
             span = self._times[-1] - self._times[0] if len(self._times) > 1 else 0
             return {
                 "status": "online" if online else "connecting" if self._connecting else "offline",
+                "preview_enabled": self.enabled,
+                "preview_available": True,
                 "fps": round((len(self._times) - 1) / span, 1) if online and span > 0 else None,
                 "last_frame_at_ms": round(self._last_frame_at * 1000) if self._last_frame_at else None,
                 "frame_age_ms": round(age * 1000) if age is not None else None,
-                "width": 320, "height": 240,
+                "width": self._size[0], "height": self._size[1],
             }
 
     def subscribe(self):
@@ -205,6 +238,7 @@ class CameraViewer:
     """A slow browser skips old video frames instead of building a backlog."""
     def __init__(self, camera):
         self.camera = camera
+        self.generation = camera._generation
         self.sequence = -1
         self.closed = False
 
@@ -216,7 +250,7 @@ class CameraViewer:
         with camera._condition:
             while not self.closed:
                 age = None if camera._last_frame_mono is None else time.monotonic() - camera._last_frame_mono
-                if (camera._stop.is_set() or not camera._healthy or age is None
+                if (self.generation != camera._generation or camera._stop.is_set() or not camera._healthy or age is None
                         or age > camera._stale_seconds):
                     self.close()
                     break

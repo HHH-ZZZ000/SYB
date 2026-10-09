@@ -4,6 +4,8 @@
 #include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/time.h>
 
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
@@ -25,6 +27,7 @@ static httpd_handle_t http_server;
 static atomic_bool enabled = true;
 static atomic_bool ready = false;
 static atomic_bool frame_failed = false;
+static atomic_uint demand = 0; /* No camera acquisition when there is no explicit consumer. */
 /* The HTTP server executes one handler at a time. This deadline belongs only
  * to that handler, and bounds a whole frame even if a slow peer makes small
  * amounts of progress before each socket timeout.
@@ -87,7 +90,15 @@ static int bounded_send(httpd_handle_t server, int socket, const char *buffer, s
 
 static esp_err_t stream_handler(httpd_req_t *request)
 {
-    if (!atomic_load(&enabled) || !atomic_load(&ready)) return unavailable(request);
+    if (!atomic_load(&enabled)) return unavailable(request);
+    atomic_fetch_add(&demand, 1);
+    const int64_t deadline = esp_timer_get_time() + 5000000;
+    while (atomic_load(&enabled) && !atomic_load(&ready) && esp_timer_get_time() < deadline)
+        vTaskDelay(pdMS_TO_TICKS(50));
+    if (!atomic_load(&enabled) || !atomic_load(&ready)) {
+        atomic_fetch_sub(&demand, 1);
+        return unavailable(request);
+    }
 
     esp_err_t result = httpd_resp_set_type(request,
         "multipart/x-mixed-replace; boundary=" PART_BOUNDARY);
@@ -174,6 +185,7 @@ static esp_err_t stream_handler(httpd_req_t *request)
      * potentially blocking send, including the camera-off path.
      */
     ESP_LOGI(TAG, "STREAM_CLOSED reason=%s enabled=%d", esp_err_to_name(result), atomic_load(&enabled));
+    atomic_fetch_sub(&demand, 1);
     return ESP_FAIL;
 }
 
@@ -215,7 +227,7 @@ static void camera_task(void *unused)
             if (err != ESP_OK) ESP_LOGW(TAG, "HTTP_START_FAILED error=%s; retry in 10s", esp_err_to_name(err));
         }
 
-        if (initialized && (!atomic_load(&enabled) || atomic_load(&frame_failed))) {
+        if (initialized && (!atomic_load(&enabled) || atomic_load(&frame_failed) || !atomic_load(&demand))) {
             atomic_store(&ready, false);
             if (xSemaphoreTake(camera_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 if (xSemaphoreTake(i2c_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
@@ -223,14 +235,14 @@ static void camera_task(void *unused)
                     xSemaphoreGive(i2c_mutex);
                     initialized = false;
                     atomic_store(&frame_failed, false);
-                    camera_retry = esp_timer_get_time() + (atomic_load(&enabled) ? RETRY_US : 0);
+                    camera_retry = esp_timer_get_time() + (atomic_load(&enabled) && atomic_load(&demand) ? RETRY_US : 0);
                     ESP_LOGI(TAG, "CAMERA_OFFLINE cleanup=%s; QMA bus retained", esp_err_to_name(err));
                 }
                 xSemaphoreGive(camera_mutex);
             }
         }
 
-        if (atomic_load(&enabled) && !initialized && now >= camera_retry) {
+        if (atomic_load(&enabled) && atomic_load(&demand) && !initialized && now >= camera_retry) {
             camera_retry = now + RETRY_US;
             if (!esp_psram_is_initialized()) {
                 ESP_LOGW(TAG, "PSRAM_UNAVAILABLE; camera offline; QMA acquisition continues");
@@ -298,4 +310,46 @@ void camera_monitor_set_enabled(bool value)
 {
     atomic_store(&enabled, value);
     ESP_LOGI(TAG, "CAMERA_REQUEST enabled=%d", value);
+}
+
+esp_err_t camera_monitor_capture(uint8_t **jpeg, size_t *length, int64_t *capture_time_us)
+{
+    *jpeg = NULL;
+    *length = 0;
+    if (!camera_mutex || !atomic_load(&enabled)) return ESP_ERR_INVALID_STATE;
+    const int64_t requested_at = esp_timer_get_time();
+    atomic_fetch_add(&demand, 1);
+    while (!atomic_load(&ready) && atomic_load(&enabled) && esp_timer_get_time() - requested_at < 5000000)
+        vTaskDelay(pdMS_TO_TICKS(50));
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (atomic_load(&ready) && atomic_load(&enabled) && xSemaphoreTake(camera_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        result = ESP_ERR_TIMEOUT;
+        /* Discard pre-request buffers. A frame is new only if its DMA began
+         * after this request; returning the previous preview is not success. */
+        while (atomic_load(&enabled) && esp_timer_get_time() - requested_at < 9000000) {
+            camera_fb_t *frame = esp_camera_fb_get();
+            if (!valid_frame(frame)) {
+                if (frame) esp_camera_fb_return(frame);
+                atomic_store(&frame_failed, true);
+                result = ESP_ERR_INVALID_RESPONSE;
+                break;
+            }
+            int64_t frame_us = (int64_t)frame->timestamp.tv_sec * 1000000 + frame->timestamp.tv_usec;
+            if (frame_us >= requested_at) {
+                struct timeval wall;
+                gettimeofday(&wall, NULL);
+                *capture_time_us = (int64_t)wall.tv_sec * 1000000 + wall.tv_usec - (esp_timer_get_time() - frame_us);
+                *jpeg = heap_caps_malloc(frame->len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                result = *jpeg ? ESP_OK : ESP_ERR_NO_MEM;
+                if (*jpeg) { memcpy(*jpeg, frame->buf, frame->len); *length = frame->len; }
+                esp_camera_fb_return(frame);
+                break;
+            }
+            esp_camera_fb_return(frame);
+        }
+        xSemaphoreGive(camera_mutex);
+    }
+    atomic_fetch_sub(&demand, 1);
+    ESP_LOGI(TAG, "SINGLE_FRAME result=%s jpeg_bytes=%u", esp_err_to_name(result), (unsigned)*length);
+    return result;
 }
